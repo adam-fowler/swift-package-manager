@@ -63,44 +63,50 @@ public final class Cancellator: Cancellable {
                 return true
             }, true)
 #else
-            // trap SIGINT to terminate sub-processes, etc
-            signal(SIGINT, SIG_IGN)
-            let interruptSignalSource = DispatchSource.makeSignalSource(signal: SIGINT)
-            interruptSignalSource.setEventHandler { [weak self] in
-                // cancel the trap?
-                interruptSignalSource.cancel()
-                
-                // Terminate all processes on receiving an interrupt signal.
-                try? self?.cancel(deadline: .now() + .seconds(30))
-                
-#if canImport(Darwin) || os(OpenBSD)
-                // Install the default signal handler.
-                var action = sigaction()
-                action.__sigaction_u.__sa_handler = SIG_DFL
-                sigaction(SIGINT, &action, nil)
-                kill(getpid(), SIGINT)
-#elseif os(Android)
-                // Install the default signal handler.
-                var action = sigaction()
-                action.sa_handler = SIG_DFL
-                sigaction(SIGINT, &action, nil)
-                kill(getpid(), SIGINT)
-#else
-                var action = sigaction()
-                action.__sigaction_handler = unsafeBitCast(
-                    SIG_DFL,
-                    to: sigaction.__Unnamed_union___sigaction_handler.self
-                )
-                sigaction(SIGINT, &action, nil)
-                kill(getpid(), SIGINT)
+            installSignalHandler(SIGINT)
+            installSignalHandler(SIGTERM)
 #endif
-            }
-            interruptSignalSource.resume()
-#endif
-            
             Self.isSignalHandlerInstalled = true
         }
     }
+
+#if !os(Windows)
+    func installSignalHandler(_ signalCode: Int32) {
+        // trap signal to pass onto sub-processes, etc
+        signal(signalCode, SIG_IGN)
+        let interruptSignalSource = DispatchSource.makeSignalSource(signal: signalCode)
+        interruptSignalSource.setEventHandler { [weak self] in
+            // cancel the trap?
+            interruptSignalSource.cancel()
+            
+            // Terminate all processes on receiving an interrupt signal.
+            try? self?.cancel(deadline: .now() + .seconds(30))
+            
+#if canImport(Darwin) || os(OpenBSD)
+            // Install the default signal handler.
+            var action = sigaction()
+            action.__sigaction_u.__sa_handler = SIG_DFL
+            sigaction(signalCode, &action, nil)
+            kill(getpid(), signalCode)
+#elseif os(Android)
+            // Install the default signal handler.
+            var action = sigaction()
+            action.sa_handler = SIG_DFL
+            sigaction(signalCode, &action, nil)
+            kill(getpid(), signalCode)
+#else
+            var action = sigaction()
+            action.__sigaction_handler = unsafeBitCast(
+                SIG_DFL,
+                to: sigaction.__Unnamed_union___sigaction_handler.self
+            )
+            sigaction(signalCode, &action, nil)
+            kill(getpid(), signalCode)
+#endif
+        }
+        interruptSignalSource.resume()
+    }
+#endif
 
     @discardableResult
     public func register(name: String, handler: @escaping CancellationHandler) -> RegistrationKey? {
